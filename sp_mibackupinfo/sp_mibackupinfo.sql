@@ -51,14 +51,14 @@ DECLARE @ErrorLog TABLE (
                         PRIMARY KEY (LogDate, LogID)
                         );
 
-DECLARE @BackupInfo TABLE (
-                        LogID INT NOT NULL,
-                        LogDate DATETIME NOT NULL,
-                        ProcessInfo NVARCHAR(50) NOT NULL,
-                        LogText NVARCHAR(4000) NOT NULL,
-						service_broker_guid UNIQUEIDENTIFIER,
-                        PRIMARY KEY (LogDate, LogID)
-                        );
+--DECLARE @BackupInfo TABLE (
+--                        LogID INT NOT NULL,
+--                        LogDate DATETIME NOT NULL,
+--                        ProcessInfo NVARCHAR(50) NOT NULL,
+--                        LogText NVARCHAR(4000) NOT NULL,
+--						service_broker_guid UNIQUEIDENTIFIER,
+--                        PRIMARY KEY (LogDate, LogID)
+--                        );
 
 
 
@@ -80,33 +80,36 @@ EXEC sys.xp_readerrorlog 0,1,N'Backup(',@service_broker_guid,@startdate,@enddate
 
 IF UPPER(@level) = 'DETAILED'
 BEGIN
-	INSERT INTO @BackupInfo (LogID, LogDate, ProcessInfo, LogText, service_broker_guid)
-	SELECT LogID, LogDate, ProcessInfo, LogText, TRY_CONVERT(uniqueidentifier, SUBSTRING(LogText, 8, 36)) FROM @ErrorLog
+	SELECT el.LogDate,
+		el.ProcessInfo,
+		LogText = IIF(d.name IS NULL, el.LogText, REPLACE(el.LogText COLLATE Latin1_General_100_CI_AS, d.physical_database_name, d.name)),
+		DatabaseName = IIF(d.name IS NULL, SUBSTRING(LogText, CHARINDEX('(', LogText)+1, CHARINDEX(')', LogText) - CHARINDEX('(', LogText)-1), d.name)
+	FROM @ErrorLog AS el
+	LEFT JOIN sys.databases d 
+	ON el.LogText COLLATE Latin1_General_100_CI_AS LIKE '%'+d.physical_database_name+'%'
+	ORDER BY el.LogDate DESC,
+		el.LogID
+	OPTION (RECOMPILE, MAXDOP 1);
 END
 
 IF UPPER(@level) = 'BASIC'
 BEGIN
-	INSERT INTO @BackupInfo (LogID, LogDate, ProcessInfo, LogText, service_broker_guid)
-	SELECT LogID, LogDate, ProcessInfo, LogText, TRY_CONVERT(uniqueidentifier, SUBSTRING(LogText, 8, 36)) FROM @ErrorLog
+	SELECT el.LogDate,
+		el.ProcessInfo,
+		LogText = IIF(d.name IS NULL, el.LogText, REPLACE(el.LogText COLLATE Latin1_General_100_CI_AS, d.physical_database_name, d.name)),
+		DatabaseName = IIF(d.name IS NULL, SUBSTRING(LogText, CHARINDEX('(', LogText)+1, CHARINDEX(')', LogText) - CHARINDEX('(', LogText)-1), d.name)
+	FROM @ErrorLog AS el
+	LEFT JOIN sys.databases d 
+	ON el.LogText COLLATE Latin1_General_100_CI_AS LIKE '%'+d.physical_database_name+'%'
 	WHERE LogText like '%BACKUP LOG started'
-	OR LogText like '%BACKUP LOG finished'
-	OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL started'
-	OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL finished'
-	OR LogText like '%BACKUP DATABASE started'
-	OR LogText like '%BACKUP DATABASE finished'
-	OR CHARINDEX('Estimated total size',LogText) > 0
-	OR CHARINDEX('percent',LogText) > 0
+		OR LogText like '%BACKUP LOG finished'
+		OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL started'
+		OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL finished'
+		OR LogText like '%BACKUP DATABASE started'
+		OR LogText like '%BACKUP DATABASE finished'
+		OR CHARINDEX('Estimated total size',LogText) > 0
+		OR CHARINDEX('percent',LogText) > 0
+	ORDER BY el.LogDate DESC,
+		el.LogID
+	OPTION (RECOMPILE, MAXDOP 1);
 END
-
--- Return filtered log
-SELECT 
-	bi.Logdate, 
-	bi.ProcessInfo,
-	bi.LogText,
-	ISNULL(db.[name], SUBSTRING(LogText, CHARINDEX('(', LogText)+1, CHARINDEX(')', LogText) - CHARINDEX('(', LogText)-1)) as DatabaseName
-FROM @BackupInfo AS bi
-LEFT JOIN sys.databases db
-ON bi.service_broker_guid = db.service_broker_guid
-ORDER BY bi.LogDate,
-         bi.LogID
-OPTION (RECOMPILE, MAXDOP 1);
