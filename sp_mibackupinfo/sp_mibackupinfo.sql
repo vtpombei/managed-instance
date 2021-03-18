@@ -51,17 +51,6 @@ DECLARE @ErrorLog TABLE (
                         PRIMARY KEY (LogDate, LogID)
                         );
 
---DECLARE @BackupInfo TABLE (
---                        LogID INT NOT NULL,
---                        LogDate DATETIME NOT NULL,
---                        ProcessInfo NVARCHAR(50) NOT NULL,
---                        LogText NVARCHAR(4000) NOT NULL,
---						service_broker_guid UNIQUEIDENTIFIER,
---                        PRIMARY KEY (LogDate, LogID)
---                        );
-
-
-
 IF (NOT IS_SRVROLEMEMBER(N'securityadmin') = 1) AND (NOT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1)
 BEGIN
     RAISERROR(27219,-1,-1);
