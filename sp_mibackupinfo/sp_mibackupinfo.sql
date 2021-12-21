@@ -51,6 +51,17 @@ DECLARE @ErrorLog TABLE (
                         PRIMARY KEY (LogDate, LogID)
                         );
 
+DECLARE @output TABLE (
+                        LogID INT NOT NULL,
+                        LogDate DATETIME NOT NULL,
+                        ProcessInfo NVARCHAR(50) NOT NULL,
+                        LogText NVARCHAR(4000) NOT NULL,
+						DatabaseName VARCHAR(100),
+						BackupType VARCHAR(4),
+						RequestedBy VARCHAR(15),
+                        PRIMARY KEY (LogDate, LogID)
+                        );
+
 IF (NOT IS_SRVROLEMEMBER(N'securityadmin') = 1) AND (NOT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') = 1)
 BEGIN
     RAISERROR(27219,-1,-1);
@@ -58,47 +69,76 @@ BEGIN
 END;
 
 -- If the database name is provided collect the service_broker_guid to be used to filter the error log
-IF @dbname IS NOT NULL or @dbname = ''
+IF @dbname IS NOT NULL AND @dbname != ''
 BEGIN
 	SELECT @service_broker_guid = service_broker_guid FROM sys.databases WHERE [name] = @dbname
 END
 
 -- Get log filtered by "Backup(", the other parameters can be null
 INSERT INTO @ErrorLog (LogDate, ProcessInfo, LogText)
-EXEC sys.xp_readerrorlog 0,1,N'Backup(',@service_broker_guid,@startdate,@enddate;
+EXEC sys.xp_readerrorlog 0, 1, N'Backup(', NULL, @startdate, @enddate;
 
-IF UPPER(@level) = 'DETAILED'
-BEGIN
-	SELECT el.LogDate,
+INSERT INTO @output (LogID,LogDate,ProcessInfo,LogText,DatabaseName,BackupType,RequestedBy)
+SELECT el.LogID, el.LogDate,
 		el.ProcessInfo,
 		LogText = IIF(d.name IS NULL, el.LogText, REPLACE(el.LogText COLLATE Latin1_General_100_CI_AS, d.physical_database_name, d.name)),
-		DatabaseName = IIF(d.name IS NULL, SUBSTRING(LogText, CHARINDEX('(', LogText)+1, CHARINDEX(')', LogText) - CHARINDEX('(', LogText)-1), d.name)
+		DatabaseName = IIF(d.name IS NULL, SUBSTRING(LogText, CHARINDEX('(', LogText)+1, CHARINDEX(')', LogText) - CHARINDEX('(', LogText)-1), d.name),
+		DatabaseType = IIF(el.LogText LIKE '%BACKUP DATABASE started','FULL',IIF(el.LogText LIKE '%BACKUP DATABASE WITH DIFFERENTIAL started','DIFF',IIF(el.LogText LIKE '%BACKUP LOG started','LOG',''))),
+		RequestedBy = IIF(el.LogText LIKE '%BACKUP DATABASE started',IIF(d.name IS NULL, 'User Requested', 'Automated'),'')
 	FROM @ErrorLog AS el
 	LEFT JOIN sys.databases d 
 	ON el.LogText COLLATE Latin1_General_100_CI_AS LIKE '%'+d.physical_database_name+'%'
-	ORDER BY el.LogDate DESC,
-		el.LogID
-	OPTION (RECOMPILE, MAXDOP 1);
+
+IF UPPER(@level) = 'DETAILED'
+BEGIN
+	IF @dbname IS NOT NULL AND @dbname != ''
+	BEGIN
+		SELECT *
+		FROM @output
+		WHERE DatabaseName = @dbname
+		ORDER BY LogID DESC
+		OPTION (RECOMPILE, MAXDOP 1);
+	END
+	ELSE
+	BEGIN
+		SELECT *
+		FROM @output
+		ORDER BY LogID DESC
+		OPTION (RECOMPILE, MAXDOP 1);
+	END
 END
 
 IF UPPER(@level) = 'BASIC'
 BEGIN
-	SELECT el.LogDate,
-		el.ProcessInfo,
-		LogText = IIF(d.name IS NULL, el.LogText, REPLACE(el.LogText COLLATE Latin1_General_100_CI_AS, d.physical_database_name, d.name)),
-		DatabaseName = IIF(d.name IS NULL, SUBSTRING(LogText, CHARINDEX('(', LogText)+1, CHARINDEX(')', LogText) - CHARINDEX('(', LogText)-1), d.name)
-	FROM @ErrorLog AS el
-	LEFT JOIN sys.databases d 
-	ON el.LogText COLLATE Latin1_General_100_CI_AS LIKE '%'+d.physical_database_name+'%'
-	WHERE LogText like '%BACKUP LOG started'
-		OR LogText like '%BACKUP LOG finished'
-		OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL started'
-		OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL finished'
-		OR LogText like '%BACKUP DATABASE started'
-		OR LogText like '%BACKUP DATABASE finished'
-		OR CHARINDEX('Estimated total size',LogText) > 0
-		OR CHARINDEX('percent',LogText) > 0
-	ORDER BY el.LogDate DESC,
-		el.LogID
-	OPTION (RECOMPILE, MAXDOP 1);
+	IF @dbname IS NOT NULL AND @dbname != ''
+	BEGIN
+		SELECT *
+		FROM @output
+		WHERE DatabaseName = @dbname AND
+		(LogText like '%BACKUP LOG started'
+			OR LogText like '%BACKUP LOG finished'
+			OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL started'
+			OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL finished'
+			OR LogText like '%BACKUP DATABASE started'
+			OR LogText like '%BACKUP DATABASE finished'
+			OR CHARINDEX('Estimated total size',LogText) > 0
+			OR CHARINDEX('percent',LogText) > 0)
+		ORDER BY LogID DESC
+		OPTION (RECOMPILE, MAXDOP 1);
+	END
+	ELSE
+	BEGIN
+		SELECT *
+		FROM @output
+		WHERE LogText like '%BACKUP LOG started'
+			OR LogText like '%BACKUP LOG finished'
+			OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL started'
+			OR LogText like '%BACKUP DATABASE WITH DIFFERENTIAL finished'
+			OR LogText like '%BACKUP DATABASE started'
+			OR LogText like '%BACKUP DATABASE finished'
+			OR CHARINDEX('Estimated total size',LogText) > 0
+			OR CHARINDEX('percent',LogText) > 0
+		ORDER BY LogID DESC
+		OPTION (RECOMPILE, MAXDOP 1);
+	END
 END
